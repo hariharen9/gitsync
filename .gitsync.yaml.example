@@ -1,0 +1,17 @@
+# GitSync Configuration Example
+# Copy this to .gitsync.yaml in your repo root and customize
+
+# The base branch to rebase onto (auto-detected if not set)
+base_branch: main
+
+# The upstream remote (auto-detected if not set)
+upstream_remote: upstream
+
+# The origin remote (defaults to "origin")
+origin_remote: origin
+
+# Patterns to exclude from branch list
+exclude_patterns:
+  - "release/"
+  - "hotfix/"
+  - "archive/"
