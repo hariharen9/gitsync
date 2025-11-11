@@ -61,6 +61,7 @@ const (
 	stateHelp
 	stateConfirmingDelete
 	stateDeleting
+	stateConfirmingStash
 )
 
 // Model represents the application state
@@ -84,6 +85,7 @@ type Model struct {
 	loadingDots     string // For animating the loading message
 	deleteMode      bool   // Are we in deletion mode?
 	selectedForActionCount int
+	didStash        bool // Did we stash changes?
 }
 
 // Messages
@@ -177,6 +179,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errorMsg:
 		m.state = stateError
 		m.error = msg.err.Error()
+		if m.didStash {
+			StashPop()
+			m.didStash = false
+		}
 		return m, nil
 	
 	case branchUpdatedMsg:
@@ -197,6 +203,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		if m.updateIndex >= m.selectedForActionCount {
 			m.state = stateDone
+			if m.didStash {
+				StashPop()
+				m.didStash = false
+			}
 			return m, nil
 		}
 		
@@ -231,6 +241,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		if m.updateIndex >= m.selectedForActionCount {
 			m.state = stateDone
+			if m.didStash {
+				StashPop()
+				m.didStash = false
+			}
 			return m, nil
 		}
 		
@@ -250,8 +264,27 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmingKeys(msg)
 	case stateConfirmingDelete:
 		return m.handleConfirmingDeleteKeys(msg)
+	case stateConfirmingStash:
+		return m.handleConfirmingStashKeys(msg)
 	case stateDone, stateError:
-		if msg.String() == "q" || msg.String() == "ctrl+c" {
+		if msg.String() == " " || msg.String() == "enter" {
+			m.state = stateBrowsing
+			m.message = ""
+			m.successCount = 0
+			m.failedBranches = []string{}
+			m.updateIndex = 0
+			m.selectedForActionCount = 0
+			m.commandLog = []string{}
+			m.didStash = false
+			m.deleteMode = false
+			for _, b := range m.branches {
+				b.Selected = false
+			}
+			return m, nil
+		} else if msg.String() == "q" || msg.String() == "ctrl+c" {
+			if m.didStash {
+				StashPop()
+			}
 			m.deleteMode = false
 			return m, tea.Quit
 		}
@@ -373,7 +406,8 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			// Check for uncommitted changes before starting
 			if HasUncommittedChanges() {
-				m.message = "Aborting: You have uncommitted changes. Please stash or commit them first."
+				m.state = stateConfirmingStash
+				m.message = "You have uncommitted changes. Stash them and proceed? (y/n)"
 				return m, nil
 			}
 	
@@ -412,6 +446,7 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.updateIndex = 0
 				m.successCount = 0
 				m.failedBranches = []string{}
+				m.selectedForActionCount = selectedCount
 				return m, m.updateNextBranch()
 			}	}
 	
@@ -480,6 +515,19 @@ func (m Model) handleConfirmingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.selectedForActionCount++
 			}
 		}
+		// Populate command log
+		m.commandLog = []string{}
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git fetch %s %s", m.config.UpstreamRemote, m.config.BaseBranch))
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git checkout %s", m.config.BaseBranch))
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git reset --hard %s/%s", m.config.UpstreamRemote, m.config.BaseBranch))
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin %s --force-with-lease", m.config.BaseBranch))
+		for _, b := range m.branches {
+			if b.Selected {
+				m.commandLog = append(m.commandLog, fmt.Sprintf("git checkout %s", b.Name))
+				m.commandLog = append(m.commandLog, fmt.Sprintf("git rebase %s", m.config.BaseBranch))
+				m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin %s --force-with-lease", b.Name))
+			}
+		}
 		return m, m.updateNextBranch()
 	
 	case "n", "N", "q", "ctrl+c":
@@ -524,6 +572,63 @@ func (m Model) handleConfirmingDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for _, b := range m.branches {
 			b.Selected = false
 		}
+	}
+	
+	return m, nil
+}
+
+// handleConfirmingStashKeys handles keys in confirming stash state
+func (m Model) handleConfirmingStashKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		if err := StashChanges(); err != nil {
+			m.state = stateError
+			m.error = err.Error()
+			return m, nil
+		}
+		m.didStash = true
+		
+		// Populate command log
+		m.commandLog = []string{}
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git fetch %s %s", m.config.UpstreamRemote, m.config.BaseBranch))
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git checkout %s", m.config.BaseBranch))
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git reset --hard %s/%s", m.config.UpstreamRemote, m.config.BaseBranch))
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin %s --force-with-lease", m.config.BaseBranch))
+		for _, b := range m.branches {
+			if b.Selected {
+				m.commandLog = append(m.commandLog, fmt.Sprintf("git checkout %s", b.Name))
+				m.commandLog = append(m.commandLog, fmt.Sprintf("git rebase %s", m.config.BaseBranch))
+				m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin %s --force-with-lease", b.Name))
+			}
+		}
+
+		// Proceed with update
+		selectedCount := 0
+		for _, b := range m.branches {
+			if b.Selected {
+				selectedCount++
+			}
+		}
+		if selectedCount == 0 {
+			m.message = "No branches selected"
+			m.state = stateBrowsing
+			return m, nil
+		}
+		if manualMode {
+			m.state = stateConfirming
+			m.message = fmt.Sprintf("Ready to update %d branch(es). Press 'y' to continue, 'n' to cancel.", selectedCount)
+		} else {
+			m.state = stateUpdating
+			m.updateIndex = 0
+			m.successCount = 0
+			m.failedBranches = []string{}
+			m.selectedForActionCount = selectedCount
+			return m, m.updateNextBranch()
+		}
+
+	case "n", "N", "q", "ctrl+c", "esc":
+		m.state = stateBrowsing
+		m.message = "Update cancelled."
 	}
 	
 	return m, nil
@@ -666,6 +771,8 @@ func (m Model) View() string {
 		return m.viewConfirming()
 	case stateConfirmingDelete:
 		return m.viewConfirmingDelete()
+	case stateConfirmingStash:
+		return m.viewConfirmingStash()
 	case stateUpdating, stateDeleting:
 		return m.viewUpdating()
 	case stateDone:
@@ -902,6 +1009,20 @@ func (m Model) viewConfirmingDelete() string {
 	return s.String()
 }
 
+func (m Model) viewConfirmingStash() string {
+	var s strings.Builder
+	
+	s.WriteString(warningStyle.Render("🤔 GitSync - Uncommitted Changes"))
+	s.WriteString("\n\n")
+	
+	s.WriteString(boxStyle.Render(m.message))
+	s.WriteString("\n\n")
+	
+	s.WriteString(dimStyle.Render("  y: stash and proceed  n: cancel"))
+	
+	return s.String()
+}
+
 func (m Model) viewUpdating() string {
 	var s strings.Builder
 	
@@ -1012,8 +1133,14 @@ func (m Model) viewDone() string {
 		}
 	}
 	
+	if m.didStash {
+		s.WriteString("\n")
+		s.WriteString(infoStyle.Render("  ✓ Stashed changes have been restored."))
+		s.WriteString("\n")
+	}
+
 	s.WriteString("\n")
-	s.WriteString(dimStyle.Render("  Press q to quit"))
+	s.WriteString(dimStyle.Render("  Press space/enter to continue, q to quit"))
 	
 	return s.String()
 }
@@ -1026,7 +1153,13 @@ func (m Model) viewError() string {
 	
 	s.WriteString(errorStyle.Render("  ✗ " + m.error))
 	s.WriteString("\n\n")
-	s.WriteString(dimStyle.Render("  Press q to quit"))
+
+	if m.didStash {
+		s.WriteString(infoStyle.Render("  ✓ Stashed changes have been restored."))
+		s.WriteString("\n\n")
+	}
+
+	s.WriteString(dimStyle.Render("  Press space/enter to continue, q to quit"))
 	
 	return s.String()
 }

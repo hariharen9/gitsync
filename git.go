@@ -257,6 +257,26 @@ func DeleteRemoteBranch(branchName string) error {
 	return nil
 }
 
+// StashChanges stashes the current changes
+func StashChanges() error {
+	cmd := exec.Command("git", "stash")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// StashPop pops the latest stash
+func StashPop() error {
+	cmd := exec.Command("git", "stash", "pop")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 // HasUncommittedChanges checks if there are uncommitted changes
 func HasUncommittedChanges() bool {
 	cmd := exec.Command("git", "status", "--porcelain", "-uno")
