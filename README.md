@@ -61,7 +61,7 @@ Doing this manually for each branch is tedious and error-prone. GitSync provides
 
 ## 🚀 Installation
 
-You can build from source and install the `gitsync` binary.
+You can build from source and install the `gitsync` binary using the provided scripts or Makefile.
 
 1.  **Clone the repository:**
     ```bash
@@ -70,19 +70,26 @@ You can build from source and install the `gitsync` binary.
     ```
 
 2.  **Build the binary:**
+    Using the build script:
     ```bash
-    go build -o gitsync
+    ./scripts/build.sh
+    ```
+    Or using the Makefile:
+    ```bash
+    make build
     ```
 
 3.  **Install it globally (optional but recommended):**
+    Using the install script:
     ```bash
-    sudo mv gitsync /usr/local/bin/
+    ./scripts/install.sh
     ```
-    Alternatively, you can use the included `Makefile`:
+    Or using the Makefile:
     ```bash
-    make build    # Build binary
-    make install  # Install to /usr/local/bin (may require sudo)
+    make install
     ```
+    The install script will place the `gitsync` binary in `/usr/local/bin/` (or another suitable location) and handle necessary permissions.
+
 
 ## 📖 Getting Started: 5-Minute Tutorial
 
@@ -168,17 +175,22 @@ In manual mode, GitSync will show you exactly what will happen and ask for your 
 ### Project Structure
 ```
 gitsync/
-├── main.go                    # Entry point, CLI flags
-├── git.go                     # Git operations (fetch, rebase, push, etc.)
-├── ui.go                      # Bubbletea UI (model, update, view)
-├── config.go                  # Configuration loading/saving
-├── tags.go                    # Branch tagging system
+├── src/                       # All Go source files
+│   ├── main.go                # Entry point, CLI flags
+│   ├── git.go                 # Git operations (fetch, rebase, push, etc.)
+│   ├── ui.go                  # Bubbletea UI (model, update, view)
+│   ├── config.go              # Configuration loading/saving
+│   └── tags.go                # Branch tagging system
+├── scripts/                   # Shell scripts for build and install
+│   ├── build.sh               # Cross-platform build script
+│   └── install.sh             # Installation script
 ├── go.mod                     # Go module definition
 ├── go.sum                     # Dependency checksums
 ├── Makefile                   # Build automation
-├── build.sh                   # Cross-platform build script
-├── install.sh                 # Installation script
-└── README.md                  # This file
+├── README.md                  # This file
+├── .gitignore
+├── .gitsync.yaml.example
+└── LICENSE
 ```
 
 ### Dependencies
@@ -189,7 +201,7 @@ gitsync/
 ### Building from Source
 - **Build for your platform:**
   ```bash
-  go build -o gitsync
+  ./scripts/build.sh
   ```
 - **Run tests or other commands:**
   ```bash
@@ -198,9 +210,9 @@ gitsync/
   make clean    # Clean build artifacts
   ```
 - **Cross-platform builds:**
-  The `build.sh` script is configured to build for multiple platforms (macOS, Linux, Windows).
+  The `scripts/build.sh` script is configured to build for multiple platforms (macOS, Linux, Windows).
   ```bash
-  ./build.sh all
+  ./scripts/build.sh all
   ```
 
 ## License

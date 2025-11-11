@@ -74,6 +74,9 @@ type Model struct {
 	failedBranches  []string
 	tagInput        string
 	tagMode         bool
+	commandLog      []string
+	searchMode      bool
+	searchQuery     string
 }
 
 // Messages
@@ -205,42 +208,72 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleBrowsingKeys handles keys in browsing state
 func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// If in search mode, handle search input
+	if m.searchMode {
+		return m.handleSearchKeys(msg)
+	}
+	
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	
 	case "up", "k":
+		filtered := m.getFilteredBranches()
 		if m.cursor > 0 {
 			m.cursor--
 		}
+		// Ensure cursor stays within filtered list
+		if m.cursor >= len(filtered) && len(filtered) > 0 {
+			m.cursor = len(filtered) - 1
+		}
 	
 	case "down", "j":
-		if m.cursor < len(m.branches)-1 {
+		filtered := m.getFilteredBranches()
+		if m.cursor < len(filtered)-1 {
 			m.cursor++
 		}
 	
 	case " ":
-		if m.cursor < len(m.branches) {
-			m.branches[m.cursor].Selected = !m.branches[m.cursor].Selected
+		filtered := m.getFilteredBranches()
+		if m.cursor < len(filtered) {
+			filtered[m.cursor].Selected = !filtered[m.cursor].Selected
 		}
 	
 	case "a":
-		// Select all
-		for _, b := range m.branches {
+		// Select all visible (filtered) branches
+		filtered := m.getFilteredBranches()
+		for _, b := range filtered {
 			b.Selected = true
 		}
 	
 	case "n":
-		// Deselect all
-		for _, b := range m.branches {
+		// Deselect all visible (filtered) branches
+		filtered := m.getFilteredBranches()
+		for _, b := range filtered {
 			b.Selected = false
 		}
 	
 	case "t":
 		// Tag current branch
-		if m.cursor < len(m.branches) {
+		filtered := m.getFilteredBranches()
+		if m.cursor < len(filtered) {
 			m.state = stateTagging
-			m.tagInput = m.branches[m.cursor].Description
+			m.tagInput = filtered[m.cursor].Description
+		}
+	
+	case "/":
+		// Enter search mode
+		m.searchMode = true
+		m.searchQuery = ""
+		m.cursor = 0
+		return m, nil
+	
+	case "esc":
+		// Clear search
+		if m.searchQuery != "" {
+			m.searchQuery = ""
+			m.cursor = 0
+			return m, nil
 		}
 	
 	case "enter":
@@ -265,11 +298,60 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.updateIndex = 0
 			m.successCount = 0
 			m.failedBranches = []string{}
+			m.commandLog = []string{}
 			return m, m.updateNextBranch()
 		}
 	}
 	
 	return m, nil
+}
+
+// handleSearchKeys handles keys in search mode
+func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter", "esc":
+		// Exit search mode
+		m.searchMode = false
+		return m, nil
+	
+	case "backspace":
+		if len(m.searchQuery) > 0 {
+			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+			m.cursor = 0 // Reset cursor when search changes
+		}
+	
+	case "ctrl+c":
+		return m, tea.Quit
+	
+	default:
+		// Add character to search query
+		if len(msg.String()) == 1 {
+			m.searchQuery += msg.String()
+			m.cursor = 0 // Reset cursor when search changes
+		}
+	}
+	
+	return m, nil
+}
+
+// getFilteredBranches returns branches that match the search query
+func (m Model) getFilteredBranches() []*Branch {
+	if m.searchQuery == "" {
+		return m.branches
+	}
+	
+	var filtered []*Branch
+	query := strings.ToLower(m.searchQuery)
+	
+	for _, branch := range m.branches {
+		// Search in branch name and description
+		if strings.Contains(strings.ToLower(branch.Name), query) ||
+			strings.Contains(strings.ToLower(branch.Description), query) {
+			filtered = append(filtered, branch)
+		}
+	}
+	
+	return filtered
 }
 
 // handleConfirmingKeys handles keys in confirming state
@@ -409,11 +491,34 @@ func (m Model) viewBrowsing() string {
 		m.config.BaseBranch, m.config.UpstreamRemote, m.currentBranch)))
 	s.WriteString("\n\n")
 	
+	// Search bar
+	if m.searchMode {
+		s.WriteString(infoStyle.Render("  Search: "))
+		s.WriteString(selectedStyle.Render(m.searchQuery + "█"))
+		s.WriteString(dimStyle.Render(" (enter/esc to exit)"))
+		s.WriteString("\n\n")
+	} else if m.searchQuery != "" {
+		s.WriteString(infoStyle.Render(fmt.Sprintf("  Filtered by: %s ", m.searchQuery)))
+		s.WriteString(dimStyle.Render("(esc to clear, / to edit)"))
+		s.WriteString("\n\n")
+	}
+	
+	// Get filtered branches
+	filteredBranches := m.getFilteredBranches()
+	
 	// Branch list
 	if len(m.branches) == 0 {
 		s.WriteString(warningStyle.Render("  No branches found (excluding base branch)"))
+	} else if len(filteredBranches) == 0 {
+		s.WriteString(warningStyle.Render(fmt.Sprintf("  No branches match '%s'", m.searchQuery)))
 	} else {
-		for i, branch := range m.branches {
+		// Show count if filtered
+		if m.searchQuery != "" {
+			s.WriteString(dimStyle.Render(fmt.Sprintf("  Showing %d of %d branches", len(filteredBranches), len(m.branches))))
+			s.WriteString("\n\n")
+		}
+		
+		for i, branch := range filteredBranches {
 			cursor := "  "
 			if i == m.cursor {
 				cursor = "❯ "
@@ -437,8 +542,21 @@ func (m Model) viewBrowsing() string {
 			
 			status := lipgloss.NewStyle().Foreground(statusColor).Render(statusIcon)
 			
-			// Branch name
+			// Branch name - highlight search match
 			name := branch.Name
+			if m.searchQuery != "" && strings.Contains(strings.ToLower(name), strings.ToLower(m.searchQuery)) {
+				// Highlight the matching part
+				lowerName := strings.ToLower(name)
+				lowerQuery := strings.ToLower(m.searchQuery)
+				idx := strings.Index(lowerName, lowerQuery)
+				if idx >= 0 {
+					before := name[:idx]
+					match := name[idx : idx+len(m.searchQuery)]
+					after := name[idx+len(m.searchQuery):]
+					name = before + warningStyle.Render(match) + after
+				}
+			}
+			
 			if i == m.cursor {
 				name = selectedStyle.Render(name)
 			} else {
@@ -480,7 +598,11 @@ func (m Model) viewBrowsing() string {
 	}
 	
 	// Help
-	s.WriteString(dimStyle.Render("  ↑/↓: navigate  space: select  a: all  n: none  t: tag  enter: update  q: quit"))
+	if m.searchMode {
+		s.WriteString(dimStyle.Render("  Type to search  enter/esc: exit search"))
+	} else {
+		s.WriteString(dimStyle.Render("  ↑/↓: navigate  space: select  a: all  n: none  /: search  t: tag  enter: update  q: quit"))
+	}
 	
 	return s.String()
 }
