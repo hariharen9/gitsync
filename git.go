@@ -57,8 +57,41 @@ func GetRemotes() ([]string, error) {
 	return remotes, nil
 }
 
-// DetectBaseBranch tries to find the main branch (master, main, dev-integration, etc)
+// DetectBaseBranch tries to find the main branch by querying upstream remote's HEAD
 func DetectBaseBranch() (string, error) {
+	// First, try to detect upstream remote
+	upstream, err := DetectUpstreamRemote()
+	if err == nil {
+		// Try to get the HEAD branch from upstream remote
+		cmd := exec.Command("git", "remote", "show", upstream)
+		output, err := cmd.Output()
+		if err == nil {
+			// Parse output to find "HEAD branch: <branch-name>"
+			lines := strings.Split(string(output), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "HEAD branch:") {
+					parts := strings.SplitN(line, ":", 2)
+					if len(parts) == 2 {
+						branch := strings.TrimSpace(parts[1])
+						// Verify this branch exists locally
+						branches, err := GetAllBranches()
+						if err == nil {
+							for _, b := range branches {
+								if b == branch {
+									return branch, nil
+								}
+							}
+						}
+						// Branch exists on remote but not locally, still return it
+						return branch, nil
+					}
+				}
+			}
+		}
+	}
+	
+	// Fallback: try common branch names
 	candidates := []string{"main", "master", "dev-integration", "develop"}
 	
 	branches, err := GetAllBranches()
