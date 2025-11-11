@@ -276,32 +276,37 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	
-	case "enter":
-		// Start update process
-		selectedCount := 0
-		for _, b := range m.branches {
-			if b.Selected {
-				selectedCount++
+		case "enter":
+			// Check for uncommitted changes before starting
+			if HasUncommittedChanges() {
+				m.message = "Aborting: You have uncommitted changes. Please stash or commit them first."
+				return m, nil
 			}
-		}
-		
-		if selectedCount == 0 {
-			m.message = "No branches selected"
-			return m, nil
-		}
-		
-		if manualMode {
-			m.state = stateConfirming
-			m.message = fmt.Sprintf("Ready to update %d branch(es). Press 'y' to continue, 'n' to cancel.", selectedCount)
-		} else {
-			m.state = stateUpdating
-			m.updateIndex = 0
-			m.successCount = 0
-			m.failedBranches = []string{}
-			m.commandLog = []string{}
-			return m, m.updateNextBranch()
-		}
-	}
+	
+			// Start update process
+			selectedCount := 0
+			for _, b := range m.branches {
+				if b.Selected {
+					selectedCount++
+				}
+			}
+	
+			if selectedCount == 0 {
+				m.message = "No branches selected"
+				return m, nil
+			}
+	
+			if manualMode {
+				m.state = stateConfirming
+				m.message = fmt.Sprintf("Ready to update %d branch(es). Press 'y' to continue, 'n' to cancel.", selectedCount)
+			} else {
+				m.state = stateUpdating
+				m.updateIndex = 0
+				m.successCount = 0
+				m.failedBranches = []string{}
+				m.commandLog = []string{}
+				return m, m.updateNextBranch()
+			}	}
 	
 	return m, nil
 }
@@ -436,7 +441,7 @@ func (m Model) updateNextBranch() tea.Cmd {
 			}
 			
 			if err := UpdateBaseBranch(m.config.BaseBranch, m.config.UpstreamRemote); err != nil {
-				return branchUpdatedMsg{branch: targetBranch.Name, success: false, error: "base update failed"}
+				return branchUpdatedMsg{branch: targetBranch.Name, success: false, error: err.Error()}
 			}
 		}
 		

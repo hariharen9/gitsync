@@ -147,8 +147,18 @@ func FetchUpstream(remote string, baseBranch string) error {
 
 // UpdateBaseBranch updates the local base branch from upstream
 func UpdateBaseBranch(baseBranch string, remote string) error {
+	// Check if the local base branch has diverged from the remote
+	cmd := exec.Command("git", "rev-list", baseBranch, fmt.Sprintf("^%s/%s", remote, baseBranch))
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("could not check for branch divergence: %w", err)
+	}
+	if len(strings.TrimSpace(string(output))) > 0 {
+		return fmt.Errorf("local base branch '%s' has diverged from '%s/%s'. Please resolve manually", baseBranch, remote, baseBranch)
+	}
+
 	// Checkout base branch
-	cmd := exec.Command("git", "checkout", baseBranch)
+	cmd = exec.Command("git", "checkout", baseBranch)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to checkout %s: %w", baseBranch, err)
 	}
@@ -196,7 +206,7 @@ func PushBranch(branchName string) error {
 
 // HasUncommittedChanges checks if there are uncommitted changes
 func HasUncommittedChanges() bool {
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := exec.Command("git", "status", "--porcelain", "-uno")
 	output, err := cmd.Output()
 	if err != nil {
 		return false
