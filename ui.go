@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -57,6 +58,7 @@ const (
 	stateDone
 	stateError
 	stateTagging
+	stateHelp
 )
 
 // Model represents the application state
@@ -77,6 +79,7 @@ type Model struct {
 	commandLog      []string
 	searchMode      bool
 	searchQuery     string
+	loadingDots     string // For animating the loading message
 }
 
 // Messages
@@ -98,6 +101,8 @@ type branchUpdatedMsg struct {
 	error   string
 }
 
+type tickMsg time.Time
+
 // InitialModel creates the initial model
 func InitialModel() Model {
 	return Model{
@@ -108,7 +113,14 @@ func InitialModel() Model {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return loadRepoInfo
+	return tea.Batch(loadRepoInfo, tick())
+}
+
+// tick sends a tickMsg every 500ms
+func tick() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 // loadRepoInfo loads repository information
@@ -188,6 +200,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		// Update next branch
 		return m, m.updateNextBranch()
+	
+	case tickMsg:
+		if m.state == stateLoading {
+			if len(m.loadingDots) < 3 {
+				m.loadingDots += "."
+			} else {
+				m.loadingDots = ""
+			}
+			return m, tick() // Continue ticking
+		}
 	}
 	
 	return m, nil
@@ -206,6 +228,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case stateTagging:
 		return m.handleTaggingKeys(msg)
+	case stateHelp:
+		return m.handleHelpKeys(msg)
 	}
 	
 	return m, nil
@@ -257,6 +281,9 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for _, b := range filtered {
 			b.Selected = false
 		}
+	
+	case "h":
+		m.state = stateHelp
 	
 	case "t":
 		// Tag current branch
@@ -432,6 +459,16 @@ func (m Model) handleTaggingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleHelpKeys handles keys in help state
+func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "h", "q", "esc":
+		m.state = stateBrowsing
+		return m, nil
+	}
+	return m, nil
+}
+
 // updateNextBranch updates the next selected branch
 func (m Model) updateNextBranch() tea.Cmd {
 	return func() tea.Msg {
@@ -494,14 +531,20 @@ func (m Model) View() string {
 		return m.viewError()
 	case stateTagging:
 		return m.viewTagging()
+	case stateHelp:
+		return m.viewHelp()
 	}
 	return ""
 }
 
 func (m Model) viewLoading() string {
-	return fmt.Sprintf("\n  %s\n  %s\n\n",
-		infoStyle.Render("⏳ "+m.message),
-		dimStyle.Render("Loading configuration, fetching latest from upstream, detecting current branch, and analyzing all branches..."))
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("🌿 GitSync - By Hariharen"))
+	s.WriteString("\n\n")
+	s.WriteString(fmt.Sprintf("  %s\n  %s\n\n",
+		infoStyle.Render("⏳ "+m.message+m.loadingDots),
+		dimStyle.Render("Loading configuration, fetching latest from upstream, detecting current branch, and analyzing all branches...")))
+	return s.String()
 }
 
 func (m Model) viewBrowsing() string {
@@ -512,8 +555,10 @@ func (m Model) viewBrowsing() string {
 	s.WriteString("\n\n")
 	
 	// Config info
-	s.WriteString(dimStyle.Render(fmt.Sprintf("  Base: %s  |  Remote: %s  |  Current: %s",
-		m.config.BaseBranch, m.config.UpstreamRemote, m.currentBranch)))
+	baseInfo := dimStyle.Render("  Base: ") + titleStyle.Render(m.config.BaseBranch)
+	remoteInfo := dimStyle.Render("  |  Remote: ") + titleStyle.Render(m.config.UpstreamRemote)
+	currentInfo := dimStyle.Render("  |  Current: ") + titleStyle.Render(m.currentBranch)
+	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Left, baseInfo, remoteInfo, currentInfo))
 	s.WriteString("\n\n")
 	
 	// Search bar
@@ -549,9 +594,9 @@ func (m Model) viewBrowsing() string {
 				cursor = "❯ "
 			}
 			
-			checkbox := "☐"
+			checkbox := dimStyle.Render("[ ]")
 			if branch.Selected {
-				checkbox = "☑"
+				checkbox = successStyle.Render("[✓]")
 			}
 			
 			// Status indicator
@@ -626,7 +671,18 @@ func (m Model) viewBrowsing() string {
 	if m.searchMode {
 		s.WriteString(dimStyle.Render("  Type to search  enter/esc: exit search"))
 	} else {
-		s.WriteString(dimStyle.Render("  ↑/↓: navigate  space: select  a: all  n: none  /: search  t: tag  enter: update  q: quit"))
+		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Left,
+			dimStyle.Render("  "),
+			titleStyle.Render("↑/↓"), dimStyle.Render(": navigate  "),
+			titleStyle.Render("space"), dimStyle.Render(": select  "),
+			titleStyle.Render("a"), dimStyle.Render(": all  "),
+			titleStyle.Render("n"), dimStyle.Render(": none  "),
+			titleStyle.Render("/"), dimStyle.Render(": search  "),
+			titleStyle.Render("t"), dimStyle.Render(": tag  "),
+			titleStyle.Render("h"), dimStyle.Render(": help  "),
+			titleStyle.Render("enter"), dimStyle.Render(": update  "),
+			titleStyle.Render("q"), dimStyle.Render(": quit"),
+		))
 	}
 	
 	return s.String()
@@ -791,5 +847,66 @@ func (m Model) viewTagging() string {
 		s.WriteString(dimStyle.Render("  enter: save  esc: cancel"))
 	}
 	
+	return s.String()
+}
+
+func (m Model) viewHelp() string {
+	var s strings.Builder
+
+	s.WriteString(titleStyle.Render("🌿 GitSync - Help"))
+	s.WriteString("\n\n")
+
+	s.WriteString(infoStyle.Render("What is GitSync?"))
+	s.WriteString("\n")
+	s.WriteString(dimStyle.Render("GitSync is a tool to streamline keeping multiple feature branches up-to-date with a central base branch (like 'main' or 'develop').\nIt provides an interactive UI to select branches and automates the process of rebasing and pushing them."))
+	s.WriteString("\n\n")
+
+	s.WriteString(infoStyle.Render("Workflow:"))
+	s.WriteString("\n")
+	s.WriteString(dimStyle.Render("1. On load, GitSync fetches the latest from your upstream remote to ensure all branch information is current."))
+	s.WriteString("\n")
+	s.WriteString(dimStyle.Render("2. It then displays a list of your local branches, showing their status relative to the base branch."))
+	s.WriteString("\n")
+	s.WriteString(dimStyle.Render("3. You can select one or more branches to update."))
+	s.WriteString("\n")
+	s.WriteString(dimStyle.Render("4. When you start the update, GitSync will first hard-reset your local base branch to match the upstream version."))
+	s.WriteString("\n")
+	s.WriteString(dimStyle.Render("5. It then, one-by-one, rebases each selected branch onto the updated base branch and force-pushes it to your 'origin' remote."))
+	s.WriteString("\n\n")
+
+	s.WriteString(infoStyle.Render("A Note on Safety:"))
+	s.WriteString("\n")
+	s.WriteString(dimStyle.Render("GitSync uses 'git push --force-with-lease'. This is a safer alternative to 'git push --force'.\nIt will not overwrite the remote branch if someone else has pushed new commits to it in the meantime, thus preventing accidental loss of work."))
+	s.WriteString("\n\n")
+
+	s.WriteString(infoStyle.Render("Commands:"))
+	s.WriteString("\n")
+	s.WriteString(fmt.Sprintf("  %s: navigate up\n", selectedStyle.Render("↑/k")))
+	s.WriteString(fmt.Sprintf("  %s: navigate down\n", selectedStyle.Render("↓/j")))
+	s.WriteString(fmt.Sprintf("  %s: select/deselect branch\n", selectedStyle.Render("space")))
+	s.WriteString(fmt.Sprintf("  %s: select all visible branches\n", selectedStyle.Render("a")))
+	s.WriteString(fmt.Sprintf("  %s: deselect all visible branches\n", selectedStyle.Render("n")))
+	s.WriteString(fmt.Sprintf("  %s: add/edit a description for the selected branch\n", selectedStyle.Render("t")))
+	s.WriteString(fmt.Sprintf("  %s: search/filter branches\n", selectedStyle.Render("/")))
+	s.WriteString(fmt.Sprintf("  %s: start the update process for selected branches\n", selectedStyle.Render("enter")))
+	s.WriteString(fmt.Sprintf("  %s: show this help window\n", selectedStyle.Render("h")))
+	s.WriteString(fmt.Sprintf("  %s: quit the application\n", selectedStyle.Render("q/ctrl+c")))
+
+	s.WriteString("\n")
+	s.WriteString(infoStyle.Render("Status Indicators:"))
+	s.WriteString("\n")
+	s.WriteString(fmt.Sprintf("  %s: Branch is up-to-date with the base branch\n", successStyle.Render("●")))
+	s.WriteString(fmt.Sprintf("  %s: Branch is behind the base branch and needs to be updated\n", warningStyle.Render("●")))
+	s.WriteString(fmt.Sprintf("  %s: Branch has a conflict with the base branch (after a failed rebase)\n", errorStyle.Render("●")))
+
+	s.WriteString("\n")
+	s.WriteString(infoStyle.Render("Ahead/Behind Info:"))
+	s.WriteString("\n")
+	s.WriteString(fmt.Sprintf("  %s: Number of commits the branch is behind the base branch\n", dimStyle.Render("↓<num>")))
+	s.WriteString(fmt.Sprintf("  %s: Number of commits the branch is ahead of the base branch\n", dimStyle.Render("↑<num>")))
+
+	s.WriteString("\n\n")
+	s.WriteString(dimStyle.Render("  Press h, q, or esc to return"))
+
 	return s.String()
 }
