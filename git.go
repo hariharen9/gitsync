@@ -237,6 +237,26 @@ func PushBranch(branchName string) error {
 	return cmd.Run()
 }
 
+// DeleteLocalBranch deletes a local branch
+func DeleteLocalBranch(branchName string) error {
+	cmd := exec.Command("git", "branch", "-d", branchName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// DeleteRemoteBranch deletes a remote branch
+func DeleteRemoteBranch(branchName string) error {
+	cmd := exec.Command("git", "push", "origin", "--delete", branchName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 // HasUncommittedChanges checks if there are uncommitted changes
 func HasUncommittedChanges() bool {
 	cmd := exec.Command("git", "status", "--porcelain", "-uno")
