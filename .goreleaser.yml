@@ -1,6 +1,11 @@
 # .goreleaser.yml
+version: 2
+
 builds:
-  - env:
+  - id: gitsync
+    main: .
+    binary: gitsync
+    env:
       - CGO_ENABLED=0
     goos:
       - linux
@@ -9,19 +14,22 @@ builds:
     goarch:
       - amd64
       - arm64
-    main: .
-    binary: gitsync
+
 archives:
-  - name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
-    replacements:
-      darwin: Darwin
-      linux: Linux
-      windows: Windows
-      amd64: x86_64
+  - id: gitsync
+    builds:
+      - gitsync
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
 checksum:
   name_template: 'checksums.txt'
+
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
+
 changelog:
   sort: asc
   filters:
