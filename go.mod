@@ -1,4 +1,4 @@
-module gitsync
+module github.com/hariharen9/gitsync
 
 go 1.21
 

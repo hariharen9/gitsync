@@ -488,7 +488,7 @@ func (m Model) viewBrowsing() string {
 	var s strings.Builder
 	
 	// Title
-	s.WriteString(titleStyle.Render("🌿 GitSync - Branch Manager"))
+	s.WriteString(titleStyle.Render("🌿 GitSync - By Hariharen"))
 	s.WriteString("\n\n")
 	
 	// Config info
