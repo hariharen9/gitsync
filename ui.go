@@ -301,6 +301,20 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 	
+			// Populate command log
+			m.commandLog = []string{}
+			m.commandLog = append(m.commandLog, fmt.Sprintf("git fetch %s %s", m.config.UpstreamRemote, m.config.BaseBranch))
+			m.commandLog = append(m.commandLog, fmt.Sprintf("git checkout %s", m.config.BaseBranch))
+			m.commandLog = append(m.commandLog, fmt.Sprintf("git reset --hard %s/%s", m.config.UpstreamRemote, m.config.BaseBranch))
+			m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin %s --force-with-lease", m.config.BaseBranch))
+			for _, b := range m.branches {
+				if b.Selected {
+					m.commandLog = append(m.commandLog, fmt.Sprintf("git checkout %s", b.Name))
+					m.commandLog = append(m.commandLog, fmt.Sprintf("git rebase %s", m.config.BaseBranch))
+					m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin %s --force-with-lease", b.Name))
+				}
+			}
+	
 			if manualMode {
 				m.state = stateConfirming
 				m.message = fmt.Sprintf("Ready to update %d branch(es). Press 'y' to continue, 'n' to cancel.", selectedCount)
@@ -309,7 +323,6 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.updateIndex = 0
 				m.successCount = 0
 				m.failedBranches = []string{}
-				m.commandLog = []string{}
 				return m, m.updateNextBranch()
 			}	}
 	
@@ -486,7 +499,9 @@ func (m Model) View() string {
 }
 
 func (m Model) viewLoading() string {
-	return fmt.Sprintf("\n  %s\n\n", infoStyle.Render("⏳ "+m.message))
+	return fmt.Sprintf("\n  %s\n  %s\n\n",
+		infoStyle.Render("⏳ "+m.message),
+		dimStyle.Render("Loading configuration, fetching latest from upstream, detecting current branch, and analyzing all branches..."))
 }
 
 func (m Model) viewBrowsing() string {
@@ -688,6 +703,18 @@ func (m Model) viewUpdating() string {
 	
 	s.WriteString("\n")
 	s.WriteString(dimStyle.Render("  Please wait..."))
+	s.WriteString("\n\n")
+	
+	// Display predicted commands
+	if len(m.commandLog) > 0 {
+		s.WriteString(boxStyle.Render(
+			lipgloss.JoinVertical(lipgloss.Left,
+				infoStyle.Render("Commands that will be ran:"),
+				dimStyle.Render(strings.Join(m.commandLog, "\n")),
+			),
+		))
+		s.WriteString("\n")
+	}
 	
 	return s.String()
 }
