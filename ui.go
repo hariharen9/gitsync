@@ -114,6 +114,11 @@ func (m Model) Init() tea.Cmd {
 // loadRepoInfo loads repository information
 func loadRepoInfo() tea.Msg {
 	config := LoadConfig()
+
+	// Fetch the latest from upstream before loading branches
+	if err := FetchUpstream(config.UpstreamRemote, config.BaseBranch); err != nil {
+		return errorMsg{fmt.Errorf("failed to fetch upstream: %w", err)}
+	}
 	
 	current, err := GetCurrentBranch()
 	if err != nil {
