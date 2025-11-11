@@ -6,7 +6,7 @@ BINARY=gitsync
 # Build the binary
 build:
 	@echo "Building $(BINARY)..."
-	@go build -o $(BINARY) ./src
+	@go build -o $(BINARY) .
 	@echo "✓ Built $(BINARY)"
 
 # Install to /usr/local/bin

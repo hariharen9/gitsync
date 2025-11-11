@@ -31,7 +31,7 @@ echo "✓ Dependencies ready"
 # Build binary
 echo ""
 echo "🔨 Building $BINARY..."
-go build -ldflags "-s -w" -o "$BINARY" ./src
+go build -ldflags "-s -w" -o "$BINARY" .
 echo "✓ Built successfully"
 
 # Check if we need sudo

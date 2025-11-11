@@ -61,7 +61,17 @@ Doing this manually for each branch is tedious and error-prone. GitSync provides
 
 ## 🚀 Installation
 
-You can build from source and install the `gitsync` binary using the provided scripts or Makefile.
+### Using `go install`
+
+You can install `gitsync` with a single command. Replace `user/repo` with the actual repository path.
+
+```bash
+go install github.com/user/repo@latest
+```
+
+### From Source
+
+Alternatively, you can build from source.
 
 1.  **Clone the repository:**
     ```bash
@@ -70,25 +80,14 @@ You can build from source and install the `gitsync` binary using the provided sc
     ```
 
 2.  **Build the binary:**
-    Using the build script:
-    ```bash
-    ./scripts/build.sh
-    ```
-    Or using the Makefile:
     ```bash
     make build
     ```
 
-3.  **Install it globally (optional but recommended):**
-    Using the install script:
-    ```bash
-    ./scripts/install.sh
-    ```
-    Or using the Makefile:
+3.  **Install it globally:**
     ```bash
     make install
     ```
-    The install script will place the `gitsync` binary in `/usr/local/bin/` (or another suitable location) and handle necessary permissions.
 
 
 ## 📖 Getting Started: 5-Minute Tutorial
@@ -175,12 +174,14 @@ In manual mode, GitSync will show you exactly what will happen and ask for your 
 ### Project Structure
 ```
 gitsync/
-├── src/                       # All Go source files
-│   ├── main.go                # Entry point, CLI flags
-│   ├── git.go                 # Git operations (fetch, rebase, push, etc.)
-│   ├── ui.go                  # Bubbletea UI (model, update, view)
-│   ├── config.go              # Configuration loading/saving
-│   └── tags.go                # Branch tagging system
+├── .github/
+│   └── workflows/
+│       └── release.yml        # Github action for release
+├── main.go                    # Entry point, CLI flags
+├── git.go                     # Git operations (fetch, rebase, push, etc.)
+├── ui.go                      # Bubbletea UI (model, update, view)
+├── config.go                  # Configuration loading/saving
+├── tags.go                    # Branch tagging system
 ├── scripts/                   # Shell scripts for build and install
 │   ├── build.sh               # Cross-platform build script
 │   └── install.sh             # Installation script
@@ -188,6 +189,7 @@ gitsync/
 ├── go.sum                     # Dependency checksums
 ├── Makefile                   # Build automation
 ├── README.md                  # This file
+├── .goreleaser.yml            # GoReleaser configuration
 ├── .gitignore
 ├── .gitsync.yaml.example
 └── LICENSE

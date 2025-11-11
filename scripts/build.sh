@@ -17,7 +17,7 @@ mkdir -p dist
 
 # Build for current platform
 echo "Building for current platform..."
-go build -ldflags "-s -w" -o "dist/${BINARY}" ./src
+go build -ldflags "-s -w" -o "dist/${BINARY}" .
 echo "✓ Built: dist/${BINARY}"
 
 # Build for other platforms (optional)
@@ -26,23 +26,23 @@ if [ "$1" == "all" ]; then
     echo "Building for all platforms..."
     
     # macOS (Intel)
-    GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w" -o "dist/${BINARY}-darwin-amd64" ./src
+    GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w" -o "dist/${BINARY}-darwin-amd64" .
     echo "✓ Built: dist/${BINARY}-darwin-amd64"
     
     # macOS (Apple Silicon)
-    GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w" -o "dist/${BINARY}-darwin-arm64" ./src
+    GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w" -o "dist/${BINARY}-darwin-arm64" .
     echo "✓ Built: dist/${BINARY}-darwin-arm64"
     
     # Linux (amd64)
-    GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o "dist/${BINARY}-linux-amd64" ./src
+    GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o "dist/${BINARY}-linux-amd64" .
     echo "✓ Built: dist/${BINARY}-linux-amd64"
     
     # Linux (arm64)
-    GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o "dist/${BINARY}-linux-arm64" ./src
+    GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o "dist/${BINARY}-linux-arm64" .
     echo "✓ Built: dist/${BINARY}-linux-arm64"
     
     # Windows (amd64)
-    GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o "dist/${BINARY}-windows-amd64.exe" ./src
+    GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o "dist/${BINARY}-windows-amd64.exe" .
     echo "✓ Built: dist/${BINARY}-windows-amd64.exe"
 fi
 
