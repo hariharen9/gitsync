@@ -1,11 +1,11 @@
-# 🌿 GitSync - Smart Branch Manager
+# 🌿 GitSync - Keep it up!
 
-A beautiful, interactive TUI (Terminal User Interface) tool for managing multiple git branches with ease. It transforms the tedious task of updating multiple branches into a visual, enjoyable experience.
+An Interactive TUI tool for managing multiple git branches with ease. It transforms the tedious task of updating multiple branches into a single click.
 
 ## The Problem It Solves
 
 When working with multiple feature branches, you often need to:
-- Keep them all up-to-date with the main branch
+- Keep them all up-to-date with the main base branch
 - Rebase them regularly to avoid conflicts
 - Remember what each branch is for
 - See which branches are behind
@@ -49,11 +49,6 @@ Doing this manually for each branch is tedious and error-prone. GitSync provides
 4. **Push to Origin** - Force-pushes (with lease) the rebased branches to your origin.
 5. **Conflict Handling** - Gracefully skips branches with conflicts and reports them at the end.
 
-### 🎨 Beautiful & Informative UI
-- **Color-Coded Interface** for quick status recognition.
-- **Real-Time Updates** with a live progress bar during operations.
-- **Detailed Summary Report** showing successful and failed operations.
-
 ### 🛡️ Safe Operations
 - **Force-with-Lease** - Uses `--force-with-lease` for safer force pushing.
 - **Conflict Detection** - Detects and skips conflicting branches, never leaving the repository in a broken state.
@@ -66,7 +61,7 @@ Doing this manually for each branch is tedious and error-prone. GitSync provides
 You can install `gitsync` with a single command. Replace `user/repo` with the actual repository path.
 
 ```bash
-go install github.com/user/repo@latest
+go install github.com/hariharen9/gitsync@latest
 ```
 
 ### From Source
@@ -75,19 +70,21 @@ Alternatively, you can build from source.
 
 1.  **Clone the repository:**
     ```bash
-    git clone <repository_url>
+    git clone https://github.com/hariharen9/gitsync.git
     cd gitsync
     ```
 
-2.  **Build the binary:**
+2.  **Install it globally:**
     ```bash
-    make build
+    ./scripts/install.sh
     ```
+    > Install.sh will take care of building and installing the binary to /usr/local/bin
 
-3.  **Install it globally:**
+3. **Build the binary for all platforms:**
     ```bash
-    make install
+    ./scripts/build.sh all
     ```
+    > Build.sh will take care of building the binary for all supported platforms ( macOS, Linux, Windows )
 
 
 ## 📖 Getting Started: 5-Minute Tutorial
@@ -129,6 +126,7 @@ Alternatively, you can build from source.
 | `a` | Select all branches |
 | `n` | Deselect all branches |
 | `t` | Tag/describe branch |
+| `h` | Help menu |
 | `enter` | Start update process |
 | `y` | Confirm (in manual mode) |
 | `n` | Cancel (in manual mode) |
@@ -155,6 +153,7 @@ exclude_patterns:
   - "release/"
   - "hotfix/"
   - "archive/"
+  - "and so on...."
 ```
 
 ## 🎛️ Manual Mode
@@ -169,54 +168,10 @@ gitsync --manual
 
 In manual mode, GitSync will show you exactly what will happen and ask for your confirmation before starting the update process.
 
-## 🛠️ For Developers: Technical Details
-
-### Project Structure
-```
-gitsync/
-├── .github/
-│   └── workflows/
-│       └── release.yml        # Github action for release
-├── main.go                    # Entry point, CLI flags
-├── git.go                     # Git operations (fetch, rebase, push, etc.)
-├── ui.go                      # Bubbletea UI (model, update, view)
-├── config.go                  # Configuration loading/saving
-├── tags.go                    # Branch tagging system
-├── scripts/                   # Shell scripts for build and install
-│   ├── build.sh               # Cross-platform build script
-│   └── install.sh             # Installation script
-├── go.mod                     # Go module definition
-├── go.sum                     # Dependency checksums
-├── Makefile                   # Build automation
-├── README.md                  # This file
-├── .goreleaser.yml            # GoReleaser configuration
-├── .gitignore
-├── .gitsync.yaml.example
-└── LICENSE
-```
-
-### Dependencies
-- **Bubbletea**: TUI framework
-- **Lipgloss**: Terminal styling
-- **YAML v3**: Configuration parsing
-
-### Building from Source
-- **Build for your platform:**
-  ```bash
-  ./scripts/build.sh
-  ```
-- **Run tests or other commands:**
-  ```bash
-  make build    # Build the binary
-  make install  # Install it globally
-  make clean    # Clean build artifacts
-  ```
-- **Cross-platform builds:**
-  The `scripts/build.sh` script is configured to build for multiple platforms (macOS, Linux, Windows).
-  ```bash
-  ./scripts/build.sh all
-  ```
-
 ## License
 
 This project is licensed under the MIT License.
+
+### Note
+
+This is built for my needs, I have to often rebase a lot of branches, so this tool is a lifesave for me. If you find it useful for you as well, please consider giving it a star on GitHub ⭐️.

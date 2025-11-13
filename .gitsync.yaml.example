@@ -1,17 +1,72 @@
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # GitSync Configuration Example
-# Copy this to .gitsync.yaml in your repo root and customize
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# Copy this file to .gitsync.yaml in your repository root and customize it.
+# Most settings are optional and will be auto-detected if not provided.
+#
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-# The base branch to rebase onto (auto-detected if not set)
+# --- Core Git Settings ---
+
+# base_branch: The branch that all of your feature branches are based on.
+# This is the branch that will be updated from the upstream remote.
+# Default: Auto-detects the default branch of your 'upstream' or 'origin' remote (e.g., 'main', 'master', 'develop').
 base_branch: main
 
-# The upstream remote (auto-detected if not set)
+# upstream_remote: The name of the remote repository that represents the "source of truth"
+# for the base_branch. This is typically the main project repository.
+# Default: Auto-detects a remote named 'upstream'. If not found, it falls back to 'origin'.
 upstream_remote: upstream
 
-# The origin remote (defaults to "origin")
+# origin_remote: The name of your personal fork of the repository.
+# GitSync will push your updated branches to this remote.
+# Default: "origin"
 origin_remote: origin
 
-# Patterns to exclude from branch list
+
+# --- Branch Filtering ---
+
+# exclude_patterns: A list of glob patterns for branches you want to hide from the list.
+# This is useful for ignoring long-lived branches, release branches, or archived work.
+# The patterns are matched against the full branch name.
 exclude_patterns:
-  - "release/"
-  - "hotfix/"
-  - "archive/"
+  # Ignore branches from other team members if you have them fetched locally
+  - "*/dependabot/*"
+  - "jane/*"
+  - "john/feature-*"
+
+  # Ignore release, hotfix, or version branches
+  - "release/*"
+  - "hotfix/*"
+  - "v[0-9].*"
+
+  # Ignore archived or old branches
+  - "archive/*"
+  - "old/*"
+  - "backup-*"
+
+
+# --- UI & Workflow Customization (Future Ideas) ---
+# The settings below are examples of what could be added in the future.
+# They are not currently implemented.
+
+# manual_mode: If true, gitsync will always ask for confirmation before running
+# any git commands that modify your branches.
+# Default: false
+# manual_mode: false
+
+# fetch_on_start: If true, gitsync will perform a 'git fetch' from the upstream
+# remote every time it starts up to ensure branch statuses are current.
+# Default: true
+# fetch_on_start: true
+
+# show_command_log: If true, the "Commands that will be ran:" box will be displayed
+# during update and delete operations.
+# Default: true
+# show_command_log: true
+
+# log_format: A string that specifies the format for the 'git log' command
+# in the log viewer pane.
+# Default: "--graph --pretty=format:'%C(yellow)%h%C(reset) - %s %C(green)(%cr) %C(bold blue)<%an>%C(reset)'"
+# log_format: "--oneline"
