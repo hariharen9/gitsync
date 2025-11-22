@@ -60,6 +60,7 @@ const (
 	stateTagging
 	stateHelp
 	stateConfirmingDelete
+	stateConfirmingDeleteType
 	stateDeleting
 	stateConfirmingStash
 )
@@ -84,6 +85,7 @@ type Model struct {
 	searchQuery     string
 	loadingDots     string // For animating the loading message
 	deleteMode      bool   // Are we in deletion mode?
+	deleteRemote    bool   // Should we delete the remote branch?
 	selectedForActionCount int
 	didStash        bool // Did we stash changes?
 }
@@ -191,10 +193,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case branchUpdatedMsg:
 		if msg.success {
 			m.successCount++
-			// Update branch status
-			for _, b := range m.branches {
+			// Update branch status AND info
+			for i, b := range m.branches {
 				if b.Name == msg.branch {
-					b.Status = "updated"
+					// Re-fetch info for the updated branch
+					updatedBranchInfo, err := GetBranchInfo(b.Name, m.config.BaseBranch, m.config.UpstreamRemote)
+					if err == nil {
+						// Preserve selection status
+						updatedBranchInfo.Selected = b.Selected
+						m.branches[i] = updatedBranchInfo
+						m.branches[i].Status = "updated"
+					}
 					break
 				}
 			}
@@ -267,6 +276,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmingKeys(msg)
 	case stateConfirmingDelete:
 		return m.handleConfirmingDeleteKeys(msg)
+	case stateConfirmingDeleteType:
+		return m.handleConfirmingDeleteTypeKeys(msg)
 	case stateConfirmingStash:
 		return m.handleConfirmingStashKeys(msg)
 	case stateDone, stateError:
@@ -545,27 +556,10 @@ func (m Model) handleConfirmingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleConfirmingDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
-		m.state = stateDeleting
-		m.updateIndex = 0
-		m.successCount = 0
-		m.failedBranches = []string{}
-		m.selectedForActionCount = 0
-		for _, b := range m.branches {
-			if b.Selected {
-				m.selectedForActionCount++
-			}
-		}
-
-		// Populate command log for deletion
-		m.commandLog = []string{}
-		for _, b := range m.branches {
-			if b.Selected {
-				m.commandLog = append(m.commandLog, fmt.Sprintf("git branch -d %s", b.Name))
-				m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin --delete %s", b.Name))
-			}
-		}
-
-		return m, m.deleteNextBranch()
+		// Move to the next step to ask for delete type
+		m.state = stateConfirmingDeleteType
+		m.message = ""
+		return m, nil
 	
 	case "n", "N", "q", "ctrl+c", "esc":
 		m.state = stateBrowsing
@@ -579,6 +573,53 @@ func (m Model) handleConfirmingDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	
 	return m, nil
 }
+
+// handleConfirmingDeleteTypeKeys handles keys in the delete type confirmation state
+func (m Model) handleConfirmingDeleteTypeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "1":
+		m.deleteRemote = false
+	case "2":
+		m.deleteRemote = true
+	case "n", "N", "q", "ctrl+c", "esc":
+		m.state = stateBrowsing
+		m.deleteMode = false
+		m.message = "Deletion cancelled"
+		for _, b := range m.branches {
+			b.Selected = false
+		}
+		return m, nil
+	default:
+		// Any other key is ignored
+		return m, nil
+	}
+
+	// This part is reached only if '1' or '2' was pressed
+	m.state = stateDeleting
+	m.updateIndex = 0
+	m.successCount = 0
+	m.failedBranches = []string{}
+	m.selectedForActionCount = 0
+	for _, b := range m.branches {
+		if b.Selected {
+			m.selectedForActionCount++
+		}
+	}
+
+	// Populate command log for deletion
+	m.commandLog = []string{}
+	for _, b := range m.branches {
+		if b.Selected {
+			m.commandLog = append(m.commandLog, fmt.Sprintf("git branch -d %s", b.Name))
+			if m.deleteRemote {
+				m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin --delete %s", b.Name))
+			}
+		}
+	}
+
+	return m, m.deleteNextBranch()
+}
+
 
 // handleConfirmingStashKeys handles keys in confirming stash state
 func (m Model) handleConfirmingStashKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -754,9 +795,12 @@ func (m Model) deleteNextBranch() tea.Cmd {
 			return branchDeletedMsg{branch: targetBranch.Name, success: false, error: err.Error()}
 		}
 		
-		// Delete remote branch
-		if err := DeleteRemoteBranch(targetBranch.Name); err != nil {
-			return branchDeletedMsg{branch: targetBranch.Name, success: false, error: err.Error()}
+		// Conditionally delete remote branch
+		if m.deleteRemote {
+			if err := DeleteRemoteBranch(targetBranch.Name); err != nil {
+				// Special error for partial success
+				return branchDeletedMsg{branch: targetBranch.Name, success: false, error: "local deleted, but remote failed: " + err.Error()}
+			}
 		}
 		
 		return branchDeletedMsg{branch: targetBranch.Name, success: true}
@@ -774,6 +818,8 @@ func (m Model) View() string {
 		return m.viewConfirming()
 	case stateConfirmingDelete:
 		return m.viewConfirmingDelete()
+	case stateConfirmingDeleteType:
+		return m.viewConfirmingDeleteType()
 	case stateConfirmingStash:
 		return m.viewConfirmingStash()
 	case stateUpdating, stateDeleting:
@@ -1009,6 +1055,24 @@ func (m Model) viewConfirmingDelete() string {
 	
 	s.WriteString(dimStyle.Render("  Are you sure? (y/n)"))
 	
+	return s.String()
+}
+
+func (m Model) viewConfirmingDeleteType() string {
+	var s strings.Builder
+
+	s.WriteString(titleStyle.Render("🔥 GitSync - Deletion Type"))
+	s.WriteString("\n\n")
+
+	s.WriteString(infoStyle.Render("  How would you like to delete the selected branches?"))
+	s.WriteString("\n\n")
+
+	s.WriteString(fmt.Sprintf("  %s: Delete locally only\n", selectedStyle.Render("1")))
+	s.WriteString(fmt.Sprintf("  %s: Delete locally AND on remote 'origin'\n", selectedStyle.Render("2")))
+
+	s.WriteString("\n")
+	s.WriteString(dimStyle.Render("  Press '1' or '2' to proceed, or 'esc' to cancel."))
+
 	return s.String()
 }
 
