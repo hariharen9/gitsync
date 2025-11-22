@@ -15,7 +15,7 @@ type Config struct {
 }
 
 // LoadConfig loads config from .gitsync.yaml or returns defaults
-func LoadConfig() *Config {
+func LoadConfig() (*Config, error) {
 	config := &Config{
 		BaseBranch:      "",
 		UpstreamRemote:  "",
@@ -39,10 +39,12 @@ func LoadConfig() *Config {
 	if config.UpstreamRemote == "" {
 		if remote, err := DetectUpstreamRemote(); err == nil {
 			config.UpstreamRemote = remote
+		} else if err != nil { // Propagate error from DetectUpstreamRemote
+			return nil, err
 		}
 	}
 	
-	return config
+	return config, nil
 }
 
 // SaveConfig saves config to .gitsync.yaml

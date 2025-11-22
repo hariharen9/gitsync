@@ -138,7 +138,7 @@ func DetectUpstreamRemote() (string, error) {
 }
 
 // GetBranchInfo gets detailed info about a branch
-func GetBranchInfo(branchName string, baseBranch string) (*Branch, error) {
+func GetBranchInfo(branchName string, baseBranch string, upstreamRemote string) (*Branch, error) {
 	branch := &Branch{
 		Name:   branchName,
 		Status: "ok",
@@ -155,7 +155,7 @@ func GetBranchInfo(branchName string, baseBranch string) (*Branch, error) {
 	}
 	
 	// Get ahead/behind counts
-	cmd = exec.Command("git", "rev-list", "--left-right", "--count", fmt.Sprintf("%s...%s", baseBranch, branchName))
+	cmd = exec.Command("git", "rev-list", "--left-right", "--count", fmt.Sprintf("%s/%s...%s", upstreamRemote, baseBranch, branchName))
 	output, err = cmd.Output()
 	if err == nil {
 		parts := strings.Fields(string(output))
@@ -288,7 +288,7 @@ func HasUncommittedChanges() bool {
 }
 
 // GetBranchesWithInfo gets all branches with their info
-func GetBranchesWithInfo(baseBranch string, excludePatterns []string) ([]*Branch, error) {
+func GetBranchesWithInfo(baseBranch string, upstreamRemote string, excludePatterns []string) ([]*Branch, error) {
 	branchNames, err := GetAllBranches()
 	if err != nil {
 		return nil, err
@@ -313,7 +313,7 @@ func GetBranchesWithInfo(baseBranch string, excludePatterns []string) ([]*Branch
 			continue
 		}
 		
-		branch, err := GetBranchInfo(name, baseBranch)
+		branch, err := GetBranchInfo(name, baseBranch, upstreamRemote)
 		if err != nil {
 			continue
 		}

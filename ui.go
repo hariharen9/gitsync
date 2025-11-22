@@ -137,11 +137,14 @@ func tick() tea.Cmd {
 
 // loadRepoInfo loads repository information
 func loadRepoInfo() tea.Msg {
-	config := LoadConfig()
+	config, err := LoadConfig()
+	if err != nil {
+		return errorMsg{err}
+	}
 
 	// Fetch the latest from upstream before loading branches
 	if err := FetchUpstream(config.UpstreamRemote, config.BaseBranch); err != nil {
-		return errorMsg{fmt.Errorf("failed to fetch upstream: %w", err)}
+		return errorMsg{fmt.Errorf("failed to fetch upstream '%s/%s': %w", config.UpstreamRemote, config.BaseBranch, err)}
 	}
 	
 	current, err := GetCurrentBranch()
@@ -149,7 +152,7 @@ func loadRepoInfo() tea.Msg {
 		return errorMsg{err}
 	}
 	
-	branches, err := GetBranchesWithInfo(config.BaseBranch, config.ExcludePatterns)
+	branches, err := GetBranchesWithInfo(config.BaseBranch, config.UpstreamRemote, config.ExcludePatterns)
 	if err != nil {
 		return errorMsg{err}
 	}

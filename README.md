@@ -54,6 +54,13 @@ Doing this manually for each branch is tedious and error-prone. GitSync provides
 - **Conflict Detection** - Detects and skips conflicting branches, never leaving the repository in a broken state.
 - **Uncommitted Changes Check** - Warns you if you have uncommitted work before starting.
 
+### I.E 👇
+   1. Fetches the latest base branch from upstream.
+   2. Updates your local base branch to match it.
+   3. Pushes this updated base branch to your origin remote (your fork).
+   4. Rebases your local feature branches onto this new base branch.
+   5. Pushes those updated feature branches to origin.
+
 ## 🚀 Installation
 
 ### Using `go install`
