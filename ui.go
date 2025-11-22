@@ -63,38 +63,49 @@ const (
 	stateConfirmingDeleteType
 	stateDeleting
 	stateConfirmingStash
+	stateCheckoutList
+	stateCheckoutNew
+	stateCheckoutNewFrom
 )
 
 // Model represents the application state
 type Model struct {
-	state           state
-	config          *Config
-	branches        []*Branch
-	cursor          int
-	message         string
-	error           string
-	currentBranch   string
-	originalBranch  string
-	updateIndex     int
-	successCount    int
-	failedBranches  []string
-	tagInput        string
-	tagMode         bool
-	commandLog      []string
-	searchMode      bool
-	searchQuery     string
-	loadingDots     string // For animating the loading message
-	deleteMode      bool   // Are we in deletion mode?
-	deleteRemote    bool   // Should we delete the remote branch?
+	state                  state
+	config                 *Config
+	branches               []*Branch
+	allBranches            []string // For checkout mode
+	cursor                 int
+	message                string
+	error                  string
+	currentBranch          string
+	originalBranch         string
+	updateIndex            int
+	successCount           int
+	failedBranches         []string
+	tagInput               string
+	tagMode                bool
+	commandLog             []string
+	searchMode             bool
+	searchQuery            string
+	loadingDots            string // For animating the loading message
+	deleteMode             bool   // Are we in deletion mode?
+	deleteRemote           bool   // Should we delete the remote branch?
 	selectedForActionCount int
-	didStash        bool // Did we stash changes?
+	didStash               bool // Did we stash changes?
+
+	// Checkout mode fields
+	checkoutCursor      int
+	checkoutSearchQuery string
+	newBranchNameInput  string
+	newBranchFromInput  string
 }
 
 // Messages
 type loadedMsg struct {
-	branches []*Branch
-	config   *Config
-	current  string
+	branches    []*Branch
+	allBranches []string
+	config      *Config
+	current     string
 }
 
 type errorMsg struct {
@@ -104,15 +115,19 @@ type errorMsg struct {
 type updateCompleteMsg struct{}
 
 type branchUpdatedMsg struct {
-	branch string
+	branch  string
 	success bool
 	error   string
 }
 
 type branchDeletedMsg struct {
-	branch string
+	branch  string
 	success bool
 	error   string
+}
+
+type checkoutMsg struct {
+	err error
 }
 
 type tickMsg time.Time
@@ -148,21 +163,27 @@ func loadRepoInfo() tea.Msg {
 	if err := FetchUpstream(config.UpstreamRemote, config.BaseBranch); err != nil {
 		return errorMsg{fmt.Errorf("failed to fetch upstream '%s/%s': %w", config.UpstreamRemote, config.BaseBranch, err)}
 	}
-	
+
 	current, err := GetCurrentBranch()
 	if err != nil {
 		return errorMsg{err}
 	}
-	
+
 	branches, err := GetBranchesWithInfo(config.BaseBranch, config.UpstreamRemote, config.ExcludePatterns)
 	if err != nil {
 		return errorMsg{err}
 	}
-	
+
+	allBranches, err := GetAllBranches()
+	if err != nil {
+		return errorMsg{err}
+	}
+
 	return loadedMsg{
-		branches: branches,
-		config:   config,
-		current:  current,
+		branches:    branches,
+		allBranches: allBranches,
+		config:      config,
+		current:     current,
 	}
 }
 
@@ -171,16 +192,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKeyPress(msg)
-	
+
 	case loadedMsg:
 		m.branches = msg.branches
+		m.allBranches = msg.allBranches
 		m.config = msg.config
 		m.currentBranch = msg.current
 		m.originalBranch = msg.current
 		m.state = stateBrowsing
 		m.message = ""
 		return m, nil
-	
+
 	case errorMsg:
 		m.state = stateError
 		m.error = msg.err.Error()
@@ -189,7 +211,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.didStash = false
 		}
 		return m, nil
-	
+
+	case checkoutMsg:
+		if msg.err != nil {
+			m.state = stateError
+			m.error = msg.err.Error()
+			return m, nil
+		}
+		// On successful checkout, return to browsing state and reload info
+		m.state = stateLoading // Show loading screen
+		m.message = "Refreshing repository information after checkout..."
+		m.error = "" // Clear any previous error
+		return m, loadRepoInfo
+
 	case branchUpdatedMsg:
 		if msg.success {
 			m.successCount++
@@ -210,9 +244,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.failedBranches = append(m.failedBranches, fmt.Sprintf("%s (%s)", msg.branch, msg.error))
 		}
-		
+
 		m.updateIndex++
-		
+
 		if m.updateIndex >= m.selectedForActionCount {
 			m.state = stateDone
 			if m.didStash {
@@ -221,10 +255,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		
+
 		// Update next branch
 		return m, m.updateNextBranch()
-	
+
 	case tickMsg:
 		if m.state == stateLoading {
 			if len(m.loadingDots) < 3 {
@@ -234,7 +268,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tick() // Continue ticking
 		}
-	
+
 	case branchDeletedMsg:
 		if msg.success {
 			m.successCount++
@@ -248,9 +282,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.failedBranches = append(m.failedBranches, fmt.Sprintf("%s (%s)", msg.branch, msg.error))
 		}
-		
+
 		m.updateIndex++
-		
+
 		if m.updateIndex >= m.selectedForActionCount {
 			m.state = stateDone
 			if m.didStash {
@@ -259,11 +293,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		
+
 		// Delete next branch
 		return m, m.deleteNextBranch()
 	}
-	
+
 	return m, nil
 }
 
@@ -280,10 +314,17 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmingDeleteTypeKeys(msg)
 	case stateConfirmingStash:
 		return m.handleConfirmingStashKeys(msg)
+	case stateCheckoutList:
+		return m.handleCheckoutListKeys(msg)
+	case stateCheckoutNew:
+		return m.handleCheckoutNewKeys(msg)
+	case stateCheckoutNewFrom:
+		return m.handleCheckoutNewFromKeys(msg)
 	case stateDone, stateError:
 		if msg.String() == " " || msg.String() == "enter" {
 			m.state = stateBrowsing
 			m.message = ""
+			m.error = ""
 			m.successCount = 0
 			m.failedBranches = []string{}
 			m.updateIndex = 0
@@ -307,7 +348,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case stateHelp:
 		return m.handleHelpKeys(msg)
 	}
-	
+
 	return m, nil
 }
 
@@ -317,11 +358,11 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.searchMode {
 		return m.handleSearchKeys(msg)
 	}
-	
+
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
-	
+
 	case "up", "k":
 		filtered := m.getFilteredBranches()
 		if m.cursor > 0 {
@@ -331,33 +372,39 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor >= len(filtered) && len(filtered) > 0 {
 			m.cursor = len(filtered) - 1
 		}
-	
+
 	case "down", "j":
 		filtered := m.getFilteredBranches()
 		if m.cursor < len(filtered)-1 {
 			m.cursor++
 		}
-	
+
 	case " ":
 		filtered := m.getFilteredBranches()
 		if m.cursor < len(filtered) {
 			filtered[m.cursor].Selected = !filtered[m.cursor].Selected
 		}
-	
+
 	case "a":
 		// Select all visible (filtered) branches
 		filtered := m.getFilteredBranches()
 		for _, b := range filtered {
 			b.Selected = true
 		}
-	
+
 	case "n":
 		// Deselect all visible (filtered) branches
 		filtered := m.getFilteredBranches()
 		for _, b := range filtered {
 			b.Selected = false
 		}
-	
+
+	case "c":
+		m.state = stateCheckoutList
+		m.checkoutCursor = 0
+		m.checkoutSearchQuery = ""
+		return m, nil
+
 	case "d":
 		if !m.deleteMode {
 			m.deleteMode = true
@@ -380,7 +427,7 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "h":
 		m.state = stateHelp
-	
+
 	case "t":
 		// Tag current branch
 		filtered := m.getFilteredBranches()
@@ -388,14 +435,14 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state = stateTagging
 			m.tagInput = filtered[m.cursor].Description
 		}
-	
+
 	case "/":
 		// Enter search mode
 		m.searchMode = true
 		m.searchQuery = ""
 		m.cursor = 0
 		return m, nil
-	
+
 	case "esc":
 		// Clear search or exit delete mode
 		if m.searchQuery != "" {
@@ -412,58 +459,59 @@ func (m Model) handleBrowsingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-	
-		case "enter":
-			if m.deleteMode {
-				// Disable enter key in delete mode
-				return m, nil
+
+	case "enter":
+		if m.deleteMode {
+			// Disable enter key in delete mode
+			return m, nil
+		}
+		// Check for uncommitted changes before starting
+		if HasUncommittedChanges() {
+			m.state = stateConfirmingStash
+			m.message = "You have uncommitted changes. Stash them and proceed? (y/n)"
+			return m, nil
+		}
+
+		// Start update process
+		selectedCount := 0
+		for _, b := range m.branches {
+			if b.Selected {
+				selectedCount++
 			}
-			// Check for uncommitted changes before starting
-			if HasUncommittedChanges() {
-				m.state = stateConfirmingStash
-				m.message = "You have uncommitted changes. Stash them and proceed? (y/n)"
-				return m, nil
+		}
+
+		if selectedCount == 0 {
+			m.message = "No branches selected"
+			return m, nil
+		}
+
+		// Populate command log
+		m.commandLog = []string{}
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git fetch %s %s", m.config.UpstreamRemote, m.config.BaseBranch))
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git checkout %s", m.config.BaseBranch))
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git reset --hard %s/%s", m.config.UpstreamRemote, m.config.BaseBranch))
+		m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin %s --force-with-lease", m.config.BaseBranch))
+		for _, b := range m.branches {
+			if b.Selected {
+				m.commandLog = append(m.commandLog, fmt.Sprintf("git checkout %s", b.Name))
+				m.commandLog = append(m.commandLog, fmt.Sprintf("git rebase %s", m.config.BaseBranch))
+				m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin %s --force-with-lease", b.Name))
 			}
-	
-			// Start update process
-			selectedCount := 0
-			for _, b := range m.branches {
-				if b.Selected {
-					selectedCount++
-				}
-			}
-	
-			if selectedCount == 0 {
-				m.message = "No branches selected"
-				return m, nil
-			}
-	
-			// Populate command log
-			m.commandLog = []string{}
-			m.commandLog = append(m.commandLog, fmt.Sprintf("git fetch %s %s", m.config.UpstreamRemote, m.config.BaseBranch))
-			m.commandLog = append(m.commandLog, fmt.Sprintf("git checkout %s", m.config.BaseBranch))
-			m.commandLog = append(m.commandLog, fmt.Sprintf("git reset --hard %s/%s", m.config.UpstreamRemote, m.config.BaseBranch))
-			m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin %s --force-with-lease", m.config.BaseBranch))
-			for _, b := range m.branches {
-				if b.Selected {
-					m.commandLog = append(m.commandLog, fmt.Sprintf("git checkout %s", b.Name))
-					m.commandLog = append(m.commandLog, fmt.Sprintf("git rebase %s", m.config.BaseBranch))
-					m.commandLog = append(m.commandLog, fmt.Sprintf("git push origin %s --force-with-lease", b.Name))
-				}
-			}
-	
-			if manualMode {
-				m.state = stateConfirming
-				m.message = fmt.Sprintf("Ready to update %d branch(es). Press 'y' to continue, 'n' to cancel.", selectedCount)
-			} else {
-				m.state = stateUpdating
-				m.updateIndex = 0
-				m.successCount = 0
-				m.failedBranches = []string{}
-				m.selectedForActionCount = selectedCount
-				return m, m.updateNextBranch()
-			}	}
-	
+		}
+
+		if manualMode {
+			m.state = stateConfirming
+			m.message = fmt.Sprintf("Ready to update %d branch(es). Press 'y' to continue, 'n' to cancel.", selectedCount)
+		} else {
+			m.state = stateUpdating
+			m.updateIndex = 0
+			m.successCount = 0
+			m.failedBranches = []string{}
+			m.selectedForActionCount = selectedCount
+			return m, m.updateNextBranch()
+		}
+	}
+
 	return m, nil
 }
 
@@ -474,16 +522,16 @@ func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Exit search mode
 		m.searchMode = false
 		return m, nil
-	
+
 	case "backspace":
 		if len(m.searchQuery) > 0 {
 			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
 			m.cursor = 0 // Reset cursor when search changes
 		}
-	
+
 	case "ctrl+c":
 		return m, tea.Quit
-	
+
 	default:
 		// Add character to search query
 		if len(msg.String()) == 1 {
@@ -491,7 +539,7 @@ func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor = 0 // Reset cursor when search changes
 		}
 	}
-	
+
 	return m, nil
 }
 
@@ -500,10 +548,10 @@ func (m Model) getFilteredBranches() []*Branch {
 	if m.searchQuery == "" {
 		return m.branches
 	}
-	
+
 	var filtered []*Branch
 	query := strings.ToLower(m.searchQuery)
-	
+
 	for _, branch := range m.branches {
 		// Search in branch name and description
 		if strings.Contains(strings.ToLower(branch.Name), query) ||
@@ -511,7 +559,7 @@ func (m Model) getFilteredBranches() []*Branch {
 			filtered = append(filtered, branch)
 		}
 	}
-	
+
 	return filtered
 }
 
@@ -543,12 +591,12 @@ func (m Model) handleConfirmingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, m.updateNextBranch()
-	
+
 	case "n", "N", "q", "ctrl+c":
 		m.state = stateBrowsing
 		m.message = "Update cancelled"
 	}
-	
+
 	return m, nil
 }
 
@@ -560,7 +608,7 @@ func (m Model) handleConfirmingDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = stateConfirmingDeleteType
 		m.message = ""
 		return m, nil
-	
+
 	case "n", "N", "q", "ctrl+c", "esc":
 		m.state = stateBrowsing
 		m.deleteMode = false
@@ -570,7 +618,7 @@ func (m Model) handleConfirmingDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			b.Selected = false
 		}
 	}
-	
+
 	return m, nil
 }
 
@@ -620,7 +668,6 @@ func (m Model) handleConfirmingDeleteTypeKeys(msg tea.KeyMsg) (tea.Model, tea.Cm
 	return m, m.deleteNextBranch()
 }
 
-
 // handleConfirmingStashKeys handles keys in confirming stash state
 func (m Model) handleConfirmingStashKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -631,7 +678,7 @@ func (m Model) handleConfirmingStashKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.didStash = true
-		
+
 		// Populate command log
 		m.commandLog = []string{}
 		m.commandLog = append(m.commandLog, fmt.Sprintf("git fetch %s %s", m.config.UpstreamRemote, m.config.BaseBranch))
@@ -674,7 +721,7 @@ func (m Model) handleConfirmingStashKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = stateBrowsing
 		m.message = "Update cancelled."
 	}
-	
+
 	return m, nil
 }
 
@@ -695,23 +742,23 @@ func (m Model) handleTaggingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.state = stateBrowsing
 		m.tagInput = ""
-	
+
 	case "esc", "ctrl+c":
 		m.state = stateBrowsing
 		m.tagInput = ""
-	
+
 	case "backspace":
 		if len(m.tagInput) > 0 {
 			m.tagInput = m.tagInput[:len(m.tagInput)-1]
 		}
-	
+
 	default:
 		// Add character to input
 		if len(msg.String()) == 1 {
 			m.tagInput += msg.String()
 		}
 	}
-	
+
 	return m, nil
 }
 
@@ -724,6 +771,157 @@ func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+// --- Checkout Mode ---
+
+func doCheckout(branchName string) tea.Cmd {
+	return func() tea.Msg {
+		return checkoutMsg{err: CheckoutBranch(branchName)}
+	}
+}
+
+func doCreateAndCheckout(newBranchName, fromBranch string) tea.Cmd {
+	return func() tea.Msg {
+		return checkoutMsg{err: CreateAndCheckoutBranch(newBranchName, fromBranch)}
+	}
+}
+
+func (m Model) getFilteredCheckoutBranches() []string {
+	if m.checkoutSearchQuery == "" {
+		return m.allBranches
+	}
+
+	var filtered []string
+	query := strings.ToLower(m.checkoutSearchQuery)
+
+	for _, branchName := range m.allBranches {
+		if strings.Contains(strings.ToLower(branchName), query) {
+			filtered = append(filtered, branchName)
+		}
+	}
+	return filtered
+}
+
+func (m Model) handleCheckoutListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	filtered := m.getFilteredCheckoutBranches()
+	// The real list count is the filtered list + 1 for the "[ Create new branch ]" item
+	realListCount := len(filtered) + 1
+
+	switch key := msg.String(); key {
+	case "ctrl+c", "q", "esc":
+		m.state = stateBrowsing
+		m.message = ""
+		return m, nil
+
+	case "up", "k":
+		if m.checkoutCursor > 0 {
+			m.checkoutCursor--
+		}
+
+	case "down", "j":
+		if m.checkoutCursor < realListCount-1 {
+			m.checkoutCursor++
+		}
+
+	case "n":
+		m.state = stateCheckoutNew
+		m.newBranchNameInput = ""
+		m.newBranchFromInput = ""
+		return m, nil
+
+	case "/":
+		m.searchMode = true
+		m.checkoutSearchQuery = ""
+		m.checkoutCursor = 0
+		return m, nil
+
+	case "enter":
+		// Cursor is on "[ Create new branch ]"
+		if m.checkoutCursor == 0 {
+			m.state = stateCheckoutNew
+			m.newBranchNameInput = ""
+			m.newBranchFromInput = ""
+			return m, nil
+		}
+		// Cursor is on an existing branch
+		branchToCheckout := filtered[m.checkoutCursor-1]
+		return m, doCheckout(branchToCheckout)
+
+	default:
+		// Handle search typing
+		if m.searchMode {
+			if key == "backspace" {
+				if len(m.checkoutSearchQuery) > 0 {
+					m.checkoutSearchQuery = m.checkoutSearchQuery[:len(m.checkoutSearchQuery)-1]
+					m.checkoutCursor = 0
+				}
+			} else if len(key) == 1 {
+				m.checkoutSearchQuery += key
+				m.checkoutCursor = 0
+			}
+		}
+	}
+
+	// If searching, exit search mode on navigation or enter
+	if m.searchMode && (msg.Type == tea.KeyUp || msg.Type == tea.KeyDown || msg.Type == tea.KeyEnter) {
+		m.searchMode = false
+	}
+
+	return m, nil
+}
+
+func (m Model) handleCheckoutNewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key := msg.String(); key {
+	case "ctrl+c", "esc":
+		m.state = stateCheckoutList
+		return m, nil
+
+	case "enter":
+		if m.newBranchNameInput != "" {
+			m.state = stateCheckoutNewFrom
+		}
+		return m, nil
+
+	case "backspace":
+		if len(m.newBranchNameInput) > 0 {
+			m.newBranchNameInput = m.newBranchNameInput[:len(m.newBranchNameInput)-1]
+		}
+
+	default:
+		if len(key) == 1 {
+			m.newBranchNameInput += key
+		}
+	}
+	return m, nil
+}
+
+func (m Model) handleCheckoutNewFromKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key := msg.String(); key {
+	case "ctrl+c", "esc":
+		m.state = stateCheckoutNew
+		return m, nil
+
+	case "enter":
+		fromBranch := m.newBranchFromInput
+		if fromBranch == "" {
+			fromBranch = m.config.BaseBranch
+		}
+		return m, doCreateAndCheckout(m.newBranchNameInput, fromBranch)
+
+	case "backspace":
+		if len(m.newBranchFromInput) > 0 {
+			m.newBranchFromInput = m.newBranchFromInput[:len(m.newBranchFromInput)-1]
+		}
+
+	default:
+		if len(key) == 1 {
+			m.newBranchFromInput += key
+		}
+	}
+	return m, nil
+}
+
+// --- End Checkout Mode ---
 
 // updateNextBranch updates the next selected branch
 func (m Model) updateNextBranch() tea.Cmd {
@@ -740,32 +938,32 @@ func (m Model) updateNextBranch() tea.Cmd {
 				currentIndex++
 			}
 		}
-		
+
 		if targetBranch == nil {
 			return branchUpdatedMsg{success: false, error: "branch not found"}
 		}
-		
+
 		// Update base branch first (only on first iteration)
 		if m.updateIndex == 0 {
 			if err := FetchUpstream(m.config.UpstreamRemote, m.config.BaseBranch); err != nil {
 				return branchUpdatedMsg{branch: targetBranch.Name, success: false, error: "fetch failed"}
 			}
-			
+
 			if err := UpdateBaseBranch(m.config.BaseBranch, m.config.UpstreamRemote); err != nil {
 				return branchUpdatedMsg{branch: targetBranch.Name, success: false, error: err.Error()}
 			}
 		}
-		
+
 		// Rebase the branch
 		if err := RebaseBranch(targetBranch.Name, m.config.BaseBranch); err != nil {
 			return branchUpdatedMsg{branch: targetBranch.Name, success: false, error: err.Error()}
 		}
-		
+
 		// Push the branch
 		if err := PushBranch(targetBranch.Name); err != nil {
 			return branchUpdatedMsg{branch: targetBranch.Name, success: false, error: "push failed"}
 		}
-		
+
 		return branchUpdatedMsg{branch: targetBranch.Name, success: true}
 	}
 }
@@ -785,16 +983,16 @@ func (m Model) deleteNextBranch() tea.Cmd {
 				currentIndex++
 			}
 		}
-		
+
 		if targetBranch == nil {
 			return branchDeletedMsg{success: false, error: "branch not found"}
 		}
-		
+
 		// Delete local branch
 		if err := DeleteLocalBranch(targetBranch.Name); err != nil {
 			return branchDeletedMsg{branch: targetBranch.Name, success: false, error: err.Error()}
 		}
-		
+
 		// Conditionally delete remote branch
 		if m.deleteRemote {
 			if err := DeleteRemoteBranch(targetBranch.Name); err != nil {
@@ -802,7 +1000,7 @@ func (m Model) deleteNextBranch() tea.Cmd {
 				return branchDeletedMsg{branch: targetBranch.Name, success: false, error: "local deleted, but remote failed: " + err.Error()}
 			}
 		}
-		
+
 		return branchDeletedMsg{branch: targetBranch.Name, success: true}
 	}
 }
@@ -824,6 +1022,12 @@ func (m Model) View() string {
 		return m.viewConfirmingStash()
 	case stateUpdating, stateDeleting:
 		return m.viewUpdating()
+	case stateCheckoutList:
+		return m.viewCheckoutList()
+	case stateCheckoutNew:
+		return m.viewCheckoutNew()
+	case stateCheckoutNewFrom:
+		return m.viewCheckoutNewFrom()
 	case stateDone:
 		return m.viewDone()
 	case stateError:
@@ -848,7 +1052,7 @@ func (m Model) viewLoading() string {
 
 func (m Model) viewBrowsing() string {
 	var s strings.Builder
-	
+
 	// Title
 	if m.deleteMode {
 		s.WriteString(errorStyle.Render("🔥 GitSync - Deletion Mode"))
@@ -856,14 +1060,14 @@ func (m Model) viewBrowsing() string {
 		s.WriteString(titleStyle.Render("🌿 GitSync - By Hariharen"))
 	}
 	s.WriteString("\n\n")
-	
+
 	// Config info
 	baseInfo := dimStyle.Render("  Base: ") + titleStyle.Render(m.config.BaseBranch)
 	remoteInfo := dimStyle.Render("  |  Remote: ") + titleStyle.Render(m.config.UpstreamRemote)
 	currentInfo := dimStyle.Render("  |  Current: ") + titleStyle.Render(m.currentBranch)
 	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Left, baseInfo, remoteInfo, currentInfo))
 	s.WriteString("\n\n")
-	
+
 	// Search bar
 	if m.searchMode {
 		s.WriteString(infoStyle.Render("  Search: "))
@@ -875,10 +1079,10 @@ func (m Model) viewBrowsing() string {
 		s.WriteString(dimStyle.Render("(esc to clear, / to edit)"))
 		s.WriteString("\n\n")
 	}
-	
+
 	// Get filtered branches
 	filteredBranches := m.getFilteredBranches()
-	
+
 	// Branch list
 	if len(m.branches) == 0 {
 		s.WriteString(warningStyle.Render("  No branches found (excluding base branch)"))
@@ -890,18 +1094,18 @@ func (m Model) viewBrowsing() string {
 			s.WriteString(dimStyle.Render(fmt.Sprintf("  Showing %d of %d branches", len(filteredBranches), len(m.branches))))
 			s.WriteString("\n\n")
 		}
-		
+
 		for i, branch := range filteredBranches {
 			cursor := "  "
 			if i == m.cursor {
 				cursor = "❯ "
 			}
-			
+
 			checkbox := dimStyle.Render("[ ]")
 			if branch.Selected {
 				checkbox = successStyle.Render("[✓]")
 			}
-			
+
 			// Status indicator
 			statusIcon := "●"
 			statusColor := lipgloss.Color("42") // green
@@ -912,9 +1116,9 @@ func (m Model) viewBrowsing() string {
 				statusIcon = "●"
 				statusColor = lipgloss.Color("196") // red
 			}
-			
+
 			status := lipgloss.NewStyle().Foreground(statusColor).Render(statusIcon)
-			
+
 			// Branch name - highlight search match
 			name := branch.Name
 			if m.searchQuery != "" && strings.Contains(strings.ToLower(name), strings.ToLower(m.searchQuery)) {
@@ -929,47 +1133,47 @@ func (m Model) viewBrowsing() string {
 					name = before + warningStyle.Render(match) + after
 				}
 			}
-			
+
 			if i == m.cursor {
 				name = selectedStyle.Render(name)
 			} else {
 				name = normalStyle.Render(name)
 			}
-			
+
 			// Behind/ahead info
 			behindAhead := ""
 			if branch.Behind > 0 || branch.Ahead > 0 {
 				behindAhead = dimStyle.Render(fmt.Sprintf(" ↓%d ↑%d", branch.Behind, branch.Ahead))
 			}
-			
+
 			// Description
 			desc := ""
 			if branch.Description != "" {
 				desc = dimStyle.Render(fmt.Sprintf(" - %s", branch.Description))
 			}
-			
+
 			// Last commit
 			lastCommit := ""
 			if branch.LastCommit != "" {
 				lastCommit = dimStyle.Render(fmt.Sprintf(" (%s)", branch.LastCommit))
 			}
-			
+
 			line := fmt.Sprintf("%s%s %s %s%s%s%s",
 				cursor, checkbox, status, name, behindAhead, desc, lastCommit)
-			
+
 			s.WriteString(line)
 			s.WriteString("\n")
 		}
 	}
-	
+
 	s.WriteString("\n")
-	
+
 	// Message
 	if m.message != "" {
 		s.WriteString(warningStyle.Render("  " + m.message))
 		s.WriteString("\n\n")
 	}
-	
+
 	// Help
 	if m.searchMode {
 		s.WriteString(dimStyle.Render("  Type to search  enter/esc: exit search"))
@@ -987,6 +1191,7 @@ func (m Model) viewBrowsing() string {
 			titleStyle.Render("space"), dimStyle.Render(": select  "),
 			titleStyle.Render("a"), dimStyle.Render(": all  "),
 			titleStyle.Render("n"), dimStyle.Render(": none  "),
+			titleStyle.Render("c"), dimStyle.Render(": checkout  "),
 			titleStyle.Render("/"), dimStyle.Render(": search  "),
 			titleStyle.Render("t"), dimStyle.Render(": tag  "),
 			titleStyle.Render("h"), dimStyle.Render(": help  "),
@@ -995,19 +1200,19 @@ func (m Model) viewBrowsing() string {
 			titleStyle.Render("q"), dimStyle.Render(": quit"),
 		))
 	}
-	
+
 	return s.String()
 }
 
 func (m Model) viewConfirming() string {
 	var s strings.Builder
-	
+
 	s.WriteString(titleStyle.Render("🌿 GitSync - Confirmation"))
 	s.WriteString("\n\n")
-	
+
 	s.WriteString(boxStyle.Render(m.message))
 	s.WriteString("\n\n")
-	
+
 	s.WriteString(infoStyle.Render("  Selected branches:"))
 	s.WriteString("\n")
 	for _, branch := range m.branches {
@@ -1019,7 +1224,7 @@ func (m Model) viewConfirming() string {
 			s.WriteString("\n")
 		}
 	}
-	
+
 	s.WriteString("\n")
 	s.WriteString(infoStyle.Render("  Operations:"))
 	s.WriteString("\n")
@@ -1027,34 +1232,34 @@ func (m Model) viewConfirming() string {
 	s.WriteString(fmt.Sprintf("    2. Update local %s\n", m.config.BaseBranch))
 	s.WriteString(fmt.Sprintf("    3. Rebase each branch onto %s\n", m.config.BaseBranch))
 	s.WriteString("    4. Push each branch to origin\n")
-	
+
 	s.WriteString("\n")
 	s.WriteString(dimStyle.Render("  y: confirm  n: cancel"))
-	
+
 	return s.String()
 }
 
 func (m Model) viewConfirmingDelete() string {
 	var s strings.Builder
-	
+
 	s.WriteString(errorStyle.Render("🔥 GitSync - Confirm Deletion"))
 	s.WriteString("\n\n")
-	
+
 	s.WriteString(warningStyle.Render("  You are about to delete the following branches both locally and remotely:"))
 	s.WriteString("\n\n")
-	
+
 	for _, branch := range m.branches {
 		if branch.Selected {
 			s.WriteString(fmt.Sprintf("    • %s\n", branch.Name))
 		}
 	}
-	
+
 	s.WriteString("\n")
 	s.WriteString(boxStyle.Render("This action cannot be undone."))
 	s.WriteString("\n\n")
-	
+
 	s.WriteString(dimStyle.Render("  Are you sure? (y/n)"))
-	
+
 	return s.String()
 }
 
@@ -1078,48 +1283,130 @@ func (m Model) viewConfirmingDeleteType() string {
 
 func (m Model) viewConfirmingStash() string {
 	var s strings.Builder
-	
+
 	s.WriteString(warningStyle.Render("🤔 GitSync - Uncommitted Changes"))
 	s.WriteString("\n\n")
-	
+
 	s.WriteString(boxStyle.Render(m.message))
 	s.WriteString("\n\n")
-	
+
 	s.WriteString(dimStyle.Render("  y: stash and proceed  n: cancel"))
-	
+
 	return s.String()
 }
 
+// --- Checkout Mode Views ---
+
+func (m Model) viewCheckoutList() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("🌿 GitSync - Checkout"))
+	s.WriteString("\n\n")
+
+	// Search bar
+	if m.searchMode {
+		s.WriteString(infoStyle.Render("  Search: "))
+		s.WriteString(selectedStyle.Render(m.checkoutSearchQuery + "█"))
+		s.WriteString(dimStyle.Render(" (esc to exit search)"))
+		s.WriteString("\n\n")
+	}
+
+	filtered := m.getFilteredCheckoutBranches()
+	// realListCount := len(filtered) + 1
+
+	// Item: Create new branch
+	cursor := "  "
+	if m.checkoutCursor == 0 {
+		cursor = "❯ "
+	}
+	s.WriteString(fmt.Sprintf("%s%s\n", cursor, selectedStyle.Render("[ Create a new branch ]")))
+
+	// List of existing branches
+	for i, branchName := range filtered {
+		// The cursor on the list is i+1 because of the create branch option
+		if m.checkoutCursor == i+1 {
+			cursor = "❯ "
+			s.WriteString(fmt.Sprintf("%s%s\n", cursor, selectedStyle.Render(branchName)))
+		} else {
+			cursor = "  "
+			s.WriteString(fmt.Sprintf("%s%s\n", cursor, normalStyle.Render(branchName)))
+		}
+	}
+
+	s.WriteString("\n")
+	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Left,
+		dimStyle.Render("  "),
+		titleStyle.Render("↑/↓"), dimStyle.Render(": navigate  "),
+		titleStyle.Render("enter"), dimStyle.Render(": select  "),
+		titleStyle.Render("/"), dimStyle.Render(": search  "),
+		titleStyle.Render("n"), dimStyle.Render(": new branch  "),
+		titleStyle.Render("q/esc"), dimStyle.Render(": cancel"),
+	))
+
+	return s.String()
+}
+
+func (m Model) viewCheckoutNew() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("🌿 GitSync - New Branch"))
+	s.WriteString("\n\n")
+
+	s.WriteString(infoStyle.Render("  Enter the name for the new branch:"))
+	s.WriteString("\n\n")
+	s.WriteString(fmt.Sprintf("  %s", selectedStyle.Render(m.newBranchNameInput+"█")))
+	s.WriteString("\n\n")
+	s.WriteString(dimStyle.Render("  enter: continue  esc: cancel"))
+
+	return s.String()
+}
+
+func (m Model) viewCheckoutNewFrom() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("🌿 GitSync - New Branch"))
+	s.WriteString("\n\n")
+
+	s.WriteString(infoStyle.Render(fmt.Sprintf("  Create new branch '%s' from base branch:", m.newBranchNameInput)))
+	s.WriteString("\n")
+	s.WriteString(dimStyle.Render(fmt.Sprintf("  (Leave empty to use default: %s)", m.config.BaseBranch)))
+	s.WriteString("\n\n")
+	s.WriteString(fmt.Sprintf("  %s", selectedStyle.Render(m.newBranchFromInput+"█")))
+	s.WriteString("\n\n")
+	s.WriteString(dimStyle.Render("  enter: create and checkout  esc: back"))
+
+	return s.String()
+}
+
+// --- End Checkout Mode Views ---
+
 func (m Model) viewUpdating() string {
 	var s strings.Builder
-	
+
 	title := "🌿 GitSync - Updating"
 	if m.state == stateDeleting {
 		title = "🔥 GitSync - Deleting"
 	}
 	s.WriteString(titleStyle.Render(title))
 	s.WriteString("\n\n")
-	
+
 	totalSelected := 0
 	for _, b := range m.branches {
 		if b.Selected {
 			totalSelected++
 		}
 	}
-	
+
 	progress := fmt.Sprintf("Progress: %d/%d", m.updateIndex+1, totalSelected)
 	s.WriteString(infoStyle.Render("  " + progress))
 	s.WriteString("\n\n")
-	
+
 	// Show branch statuses
 	for _, branch := range m.branches {
 		if !branch.Selected {
 			continue
 		}
-		
+
 		icon := dimStyle.Render("○")
 		status := ""
-		
+
 		if branch.Status == "updated" {
 			icon = successStyle.Render("✓")
 			status = successStyle.Render(" updated")
@@ -1127,14 +1414,14 @@ func (m Model) viewUpdating() string {
 			icon = successStyle.Render("✓")
 			status = successStyle.Render(" deleted")
 		}
-		
+
 		s.WriteString(fmt.Sprintf("  %s %s%s\n", icon, branch.Name, status))
 	}
-	
+
 	s.WriteString("\n")
 	s.WriteString(dimStyle.Render("  Please wait..."))
 	s.WriteString("\n\n")
-	
+
 	// Display predicted commands
 	if len(m.commandLog) > 0 && (m.state == stateUpdating || m.state == stateDeleting) {
 		s.WriteString(boxStyle.Render(
@@ -1145,16 +1432,16 @@ func (m Model) viewUpdating() string {
 		))
 		s.WriteString("\n")
 	}
-	
+
 	return s.String()
 }
 
 func (m Model) viewDone() string {
 	var s strings.Builder
-	
+
 	s.WriteString(titleStyle.Render("🌿 GitSync - Complete"))
 	s.WriteString("\n\n")
-	
+
 	if m.deleteMode {
 		if m.successCount > 0 {
 			s.WriteString(successStyle.Render(fmt.Sprintf("  ✓ Successfully deleted %d branch(es)", m.successCount)))
@@ -1169,7 +1456,7 @@ func (m Model) viewDone() string {
 		if m.successCount > 0 {
 			s.WriteString(successStyle.Render(fmt.Sprintf("  ✓ Successfully updated %d branch(es)", m.successCount)))
 			s.WriteString("\n\n")
-			
+
 			for _, branch := range m.branches {
 				if branch.Selected && branch.Status == "updated" {
 					s.WriteString(fmt.Sprintf("    • %s\n", branch.Name))
@@ -1177,16 +1464,16 @@ func (m Model) viewDone() string {
 			}
 		}
 	}
-	
+
 	if len(m.failedBranches) > 0 {
 		s.WriteString("\n")
 		s.WriteString(errorStyle.Render(fmt.Sprintf("  ✗ Failed: %d branch(es)", len(m.failedBranches))))
 		s.WriteString("\n\n")
-		
+
 		for _, failed := range m.failedBranches {
 			s.WriteString(fmt.Sprintf("    • %s\n", failed))
 		}
-		
+
 		s.WriteString("\n")
 		s.WriteString(warningStyle.Render("  Next steps:"))
 		s.WriteString("\n")
@@ -1199,7 +1486,7 @@ func (m Model) viewDone() string {
 			s.WriteString("    4. Push: git push origin <branch> --force-with-lease\n")
 		}
 	}
-	
+
 	if m.didStash {
 		s.WriteString("\n")
 		s.WriteString(infoStyle.Render("  ✓ Stashed changes have been restored."))
@@ -1208,16 +1495,16 @@ func (m Model) viewDone() string {
 
 	s.WriteString("\n")
 	s.WriteString(dimStyle.Render("  Press space/enter to continue, q to quit"))
-	
+
 	return s.String()
 }
 
 func (m Model) viewError() string {
 	var s strings.Builder
-	
+
 	s.WriteString(titleStyle.Render("🌿 GitSync - Error"))
 	s.WriteString("\n\n")
-	
+
 	s.WriteString(errorStyle.Render("  ✗ " + m.error))
 	s.WriteString("\n\n")
 
@@ -1227,28 +1514,28 @@ func (m Model) viewError() string {
 	}
 
 	s.WriteString(dimStyle.Render("  Press space/enter to continue, q to quit"))
-	
+
 	return s.String()
 }
 
 func (m Model) viewTagging() string {
 	var s strings.Builder
-	
+
 	s.WriteString(titleStyle.Render("🌿 GitSync - Tag Branch"))
 	s.WriteString("\n\n")
-	
+
 	if m.cursor < len(m.branches) {
 		branch := m.branches[m.cursor]
 		s.WriteString(infoStyle.Render(fmt.Sprintf("  Branch: %s", branch.Name)))
 		s.WriteString("\n\n")
-		
+
 		s.WriteString("  Description: ")
 		s.WriteString(selectedStyle.Render(m.tagInput + "█"))
 		s.WriteString("\n\n")
-		
+
 		s.WriteString(dimStyle.Render("  enter: save  esc: cancel"))
 	}
-	
+
 	return s.String()
 }
 

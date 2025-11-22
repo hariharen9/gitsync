@@ -327,3 +327,23 @@ func GetBranchesWithInfo(baseBranch string, upstreamRemote string, excludePatter
 func Sleep(ms int) {
 	time.Sleep(time.Duration(ms) * time.Millisecond)
 }
+
+// CheckoutBranch checks out an existing branch
+func CheckoutBranch(branchName string) error {
+	cmd := exec.Command("git", "checkout", branchName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// CreateAndCheckoutBranch creates and checks out a new branch from a base branch
+func CreateAndCheckoutBranch(newBranchName string, fromBranch string) error {
+	cmd := exec.Command("git", "checkout", "-b", newBranchName, fromBranch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(strings.TrimSpace(string(output)))
+	}
+	return nil
+}
